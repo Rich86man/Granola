@@ -29,6 +29,6 @@
  @return a formatted json string containing the sample's data in a format that adheres to the appropriate Open mHealth schema
  */
 - (NSString*)jsonForSample:(HKSample*)sample error:(NSError**)error;
-
+- (id)jsonObjectForSample:(HKSample*)sample error:(NSError**)error;
 @end
 

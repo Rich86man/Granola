@@ -134,6 +134,65 @@
     return jsonString;
 }
 
+
+- (id)jsonObjectForSample:(HKSample*)sample error:(NSError**)error {
+    NSParameterAssert(sample);
+    // first, verify we support the sample type
+    NSArray* supportedTypeIdentifiers = [[self class] typeIdentifiersWithOMHSchema];
+    NSString* sampleTypeIdentifier = sample.sampleType.identifier;
+    NSString* serializerClassName;
+    if ([supportedTypeIdentifiers includes:sampleTypeIdentifier]) {
+        serializerClassName = [[self class] typeIdentifiersWithOMHSchemaToClasses][sampleTypeIdentifier];
+    }
+    else if([sampleTypeIdentifier hasPrefix:@"HKQuantityTypeIdentifier"]){
+        serializerClassName = @"OMHSerializerGenericQuantitySample";
+    }
+    else if([sampleTypeIdentifier hasPrefix:@"HKCategoryTypeIdentifier"]){
+        serializerClassName = @"OMHSerializerGenericCategorySample";
+    }
+    else if([sampleTypeIdentifier hasPrefix:@"HKCorrelationTypeIdentifier"]){
+        serializerClassName = @"OMHSerializerGenericCorrelation";
+    }
+    else if([sampleTypeIdentifier hasPrefix:@"HKWorkoutTypeIdentifier"]){
+        serializerClassName = @"OMHSerializerGenericWorkout";
+    }
+    else{
+        if (error) {
+            NSString* errorMessage =
+            [NSString stringWithFormat: @"Unsupported HKSample type: %@",
+             sampleTypeIdentifier];
+            NSDictionary* userInfo = @{ NSLocalizedDescriptionKey : errorMessage };
+            *error = [NSError errorWithDomain: OMHErrorDomain
+                                         code: OMHErrorCodeUnsupportedType
+                                     userInfo: userInfo];
+        }
+        return nil;
+    }
+    // if we support it, select appropriate subclass for sample
+    
+    //For sleep analysis, the OMH schema does not capture an 'inBed' state, so if that value is set we need to use a generic category serializer
+    //otherwise, it defaults to using the OMH schema for the 'asleep' state.
+    if ([sampleTypeIdentifier isEqualToString:HKCategoryTypeIdentifierSleepAnalysis]){
+        HKCategorySample* categorySample = (HKCategorySample*)sample;
+        if(categorySample.value == 0){
+            serializerClassName = @"OMHSerializerGenericCategorySample";
+        }
+    }
+    Class serializerClass = NSClassFromString(serializerClassName);
+    // subclass verifies it supports sample's values
+    if (![serializerClass canSerialize:sample error:error]) {
+        return nil;
+    }
+    // instantiate a serializer
+    OMHSerializer* serializer = [[serializerClass alloc] initWithSample:sample];
+
+    if ([NSJSONSerialization isValidJSONObject:[serializer data]]) {
+        return nil; // return early if JSON serialization failed
+    }
+
+    return [serializer data];
+}
+
 + (NSString*)parseUnitFromQuantity:(HKQuantity*)quantity{
     NSString *quantityDescription = [quantity description];
     NSArray *array = [quantityDescription componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
@@ -160,7 +219,14 @@
     if(metadata){
         NSMutableArray *serializedArray = [NSMutableArray new];
         for (id key in metadata) {
-            [serializedArray addObject:@{@"key":key,@"value":[metadata valueForKey:key]}];
+            if ([metadata[key] isKindOfClass:[NSDate class]]) {
+                NSDate *d = metadata[key];
+                
+                [serializedArray addObject:@{@"key":key,@"value":[d RFC3339String]}];
+            } else {
+                [serializedArray addObject:@{@"key":key,@"value":[metadata valueForKey:key]}];
+            }
+
         }
         return @{@"metadata":[serializedArray copy]};
     }
